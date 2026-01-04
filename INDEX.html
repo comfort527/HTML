@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>台灣路線規劃（主路線＋派出所/醫學中心）</title>
+  <style>
+    :root{
+      --bg:#f6f7fb; --panel:#fff; --text:#0f172a; --muted:#475569; --border:#cbd5e1;
+      --btn:#1d4ed8; --btn2:#eef2f7; --dangerBg:#fee2e2; --dangerText:#7f1d1d;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--text);font-size:18px}
+
+    .top{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:#fff}
+    .pill{border:1px solid #c7d2fe;background:#eef2ff;border-radius:999px;padding:8px 12px;color:var(--muted);font-size:16px}
+
+    .wrap{display:grid;grid-template-columns:1fr minmax(560px,46vw);gap:12px;padding:12px;align-items:start}
+    #map{min-height:82vh;border:1px solid var(--border);border-radius:12px;background:#fff}
+    .panel{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:14px}
+
+    label{display:block;color:var(--muted);font-size:16px;margin:10px 0 6px}
+    input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--text);padding:10px 12px;outline:none;font-size:18px}
+    textarea{min-height:120px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:17px;line-height:1.7}
+
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+    button{border:1px solid #1e40af;background:var(--btn);color:#fff;border-radius:12px;padding:10px 12px;cursor:pointer;font-weight:800;font-size:18px}
+    button.secondary{border:1px solid var(--border);background:var(--btn2);color:var(--text)}
+    button.danger{border:1px solid var(--dangerText);background:var(--dangerBg);color:var(--dangerText)}
+
+    .hint,.status,.small{color:var(--muted);font-size:16px;line-height:1.6}
+    .status{margin-top:10px}
+
+    .list{margin-top:8px;display:grid;gap:8px}
+    .item{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .item b{display:block;font-size:18px}
+    .item .m{font-size:16px;color:var(--muted);word-break:break-word}
+
+    hr{border:0;border-top:1px solid var(--border);margin:12px 0}
+
+    @media (max-width: 980px){
+      .wrap{grid-template-columns:1fr}
+      #map{min-height:52vh}
+    }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="pill">主路線：可拖曳（即時更新文字）</div>
+    <div class="pill">派出所：橘色</div>
+    <div class="pill">醫學中心/醫院：紅色</div>
+    <div class="pill">衛星/街景：左上切換、右下小人</div>
+  </div>
+
+  <div class="wrap">
+    <div id="map"></div>
+
+    <div class="panel">
+      <label>Google Maps API Key</label>
+      <div class="row">
+        <input id="apiKey" type="text" placeholder="貼上 API Key" />
+        <button id="btnLoad" style="white-space:nowrap">載入</button>
+      </div>
+      <div class="hint">請用 <b>http://localhost</b> 或你的網域開啟，不要用 <b>file://</b>。若失敗請看 Console：RefererNotAllowed / BillingNotEnabled / ApiNotActivated。</div>
+
+      <div class="split">
+        <div>
+          <label>起點</label>
+          <input id="start" type="text" placeholder="例：台北車站" />
+        </div>
+        <div>
+          <label>終點</label>
+          <input id="end" type="text" placeholder="例：板橋車站" />
+        </div>
+      </div>
+
+      <div class="split">
+        <div>
+          <label>模式</label>
+          <select id="mode">
+            <option value="DRIVING" selected>開車</option>
+            <option value="WALKING">步行</option>
+            <option value="TRANSIT">大眾運輸</option>
+            <option value="BICYCLING">自行車</option>
+          </select>
+        </div>
+        <div>
+          <label>最近目標的參考點</label>
+          <select id="poiOrigin">
+            <option value="center" selected>主路線中心</option>
+            <option value="start">起點最近</option>
+            <option value="end">終點最近</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="split">
+        <div>
+          <label>醫療院所模式</label>
+          <select id="hospitalPref">
+            <option value="db" selected>自訂醫學中心資料庫</option>
+            <option value="medcenter">關鍵字：醫學中心</option>
+            <option value="hospital">最近醫院</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:end;gap:10px">
+          <button id="btnRoute" style="flex:1">規劃主路線</button>
+          <button id="btnClear" class="secondary" style="flex:1">清除</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <label class="small"><input id="showMain" type="checkbox" checked> 主路線</label>
+        <label class="small"><input id="showPolice" type="checkbox" checked> 派出所（橘）</label>
+        <label class="small"><input id="showHospital" type="checkbox" checked> 醫療（紅）</label>
+      </div>
+
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <label style="margin:10px 0 6px">建議路線（主路線）</label>
+        <button id="btnCopyMain" class="secondary" style="white-space:nowrap;padding:8px 12px">複製</button>
+      </div>
+      <textarea id="txtMain" placeholder="主路線文字"></textarea>
+
+      <label>週邊派出所清單（手動選擇後再規劃）</label>
+      <select id="policeSelect" size="6" style="display:none;margin-top:8px"></select>
+      <div class="row" style="margin-top:8px">
+        <button id="btnPoliceRoute" class="secondary" style="white-space:nowrap;display:none">規劃派出所路線</button>
+        <button id="btnPoliceRefresh" class="secondary" style="white-space:nowrap">更新派出所清單</button>
+      </div>
+      <div class="hint" id="policeHint">—</div>
+
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <label style="margin:10px 0 6px">建議路線（派出所）</label>
+        <button id="btnCopyPolice" class="secondary" style="white-space:nowrap;padding:8px 12px">複製</button>
+      </div>
+      <textarea id="txtPolice" placeholder="派出所路線文字"></textarea>
+
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <label style="margin:10px 0 6px">建議路線（最近醫學中心/醫院）</label>
+        <button id="btnCopyHospital" class="secondary" style="white-space:nowrap;padding:8px 12px">複製</button>
+      </div>
+      <textarea id="txtHospital" placeholder="醫療院所路線文字"></textarea>
+
+      <div class="status" id="sys">系統：尚未載入 Google 地圖。</div>
+
+      <hr />
+
+      <div class="pill">醫學中心資料庫</div>
+      <div class="hint">建議用 <b>Place ID</b> 加入最準。也可先搜尋、從結果加入。資料保存在本機（localStorage）。</div>
+
+      <label>新增（Place ID 或 名稱/地址）</label>
+      <div class="row">
+        <input id="medInput" type="text" placeholder="例：ChIJ... 或 台大醫院" />
+        <button id="btnMedSearch" class="secondary" style="white-space:nowrap">搜尋</button>
+        <button id="btnMedAddPlaceId" class="secondary" style="white-space:nowrap">用PlaceID加入</button>
+      </div>
+      <select id="medSearchSelect" size="5" style="display:none;margin-top:8px"></select>
+      <div class="row" style="margin-top:8px">
+        <button id="btnMedAddSelected" style="display:none">加入選取結果</button>
+        <button id="btnMedHideSearch" class="secondary" style="display:none">收起</button>
+        <button id="btnMedClear" class="danger" style="margin-left:auto">重置為預設</button>
+      </div>
+
+      <div class="list" id="medList"></div>
+
+      <label>匯出/匯入（JSON）</label>
+      <textarea id="medJson" placeholder='格式：[{"name":"台大醫院","placeId":"...","address":"...","lat":25.04,"lng":121.52}]'></textarea>
+      <div class="row">
+        <button id="btnMedExport" class="secondary">匯出</button>
+        <button id="btnMedImport" class="secondary">匯入</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+// ===== DOM helpers =====
+const $ = (id) => document.getElementById(id);
+const on = (id, ev, fn) => $(id)?.addEventListener(ev, fn);
+const sys = (t) => { const el = $('sys'); if (el) el.textContent = '系統：' + t; };
+
+// ===== Google state + 固定醫療資料庫 =====
+const MED_DB_KEY = 'medcenter_db_v4';
+const DEFAULT_MED_DB = [
+  { name: '臺大醫院', address: '100台灣臺北市中正區', placeId: 'ChIJw6Aq8napQjQRNJIRLRPF8H4', lat: 25.03957, lng: 121.5216555 },
+  { name: '雙和醫院', address: '235新北市中和區中正路291號', placeId: 'ChIJ2YVTrn0CaDQR5OCvFfGu6wc', lat: 24.9926232, lng: 121.4935872 },
+  { name: '淡水馬偕紀念醫院', address: '251新北市淡水區民權路47號', placeId: 'ChIJ0br3XJyvQjQRKdntX72s3O4', lat: 25.139527, lng: 121.460461 },
+  { name: '基隆長庚紀念醫院', address: '204基隆市安樂區麥金路222號', placeId: 'ChIJ26eVRdtNXTQRFL9wwDP0l0s', lat: 25.1206948, lng: 121.7224004 },
+  { name: '恩主公醫院', address: '237新北市三峽區復興路399號', placeId: 'ChIJbeboVPobaDQR-OQe5xVO0t0', lat: 24.9384195, lng: 121.3629993 },
+  { name: '聯新國際醫院', address: '324桃園市平鎮區廣泰路77號', placeId: 'ChIJO5Yj96UjaDQRKBwZGL4TUV8', lat: 24.9466922, lng: 121.2053006 },
+  { name: '國軍桃園總醫院', address: '325桃園市龍潭區中興路168號', placeId: 'ChIJVVVVVUU8aDQR2tn-Z6RevN8', lat: 24.8773785, lng: 121.2348665 },
+  { name: '林口長庚醫院', address: '333桃園市龜山區復興街5號', placeId: 'ChIJvSDj7_cdaDQRT4ZlaUaEyCk', lat: 25.061042, lng: 121.3679272 },
+  { name: '臺大醫院新竹分院', address: '300新竹市北區經國路一段442巷25號', placeId: 'ChIJ6d3AZ9E1aDQRHuE5zAA14pI', lat: 24.8158818, lng: 120.9806239 },
+  { name: '衛福部苗栗醫院', address: '36054苗栗縣苗栗市為公路747號', placeId: 'ChIJF_ryeGesaTQRrK712QFthpg', lat: 24.5756166, lng: 120.8408908 }
+];
+
+const S={
+  map:null, places:null, dirSvc:null,
+  rMain:null, rPolice:null, rHosp:null,
+  lastMain:null, lastPolice:null, lastHosp:null,
+  policeList:[], selectedPoliceId:null,
+  medDb:[], medSearch:[]
+};
+
+// ===== Pure helpers (easy to test) =====
+function stripHtml(html){
+  const d = document.createElement('div');
+  d.innerHTML = html || '';
+  return (d.textContent || '').trim();
+}
+
+function collapseSpaces(s){
+  return String(s || '')
+    .replace(/[\n\t\r]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function normalizeInstruction(s){
+  if(!s) return '';
+  let x = String(s)
+    .replace(/^向(右|左)轉/, (_,p)=>p+'轉')
+    .replace(/^稍向(右|左)轉/, (_,p)=>'稍'+p+'轉');
+  x = x.replace('繼續行駛 ', '').replace('繼續行駛', '');
+  return collapseSpaces(x);
+}
+
+function stepsToArrow(directions, startLabel, endLabel){
+  const leg = directions?.routes?.[0]?.legs?.[0];
+  const steps = leg?.steps || [];
+  const parts = [];
+  if(startLabel) parts.push(startLabel);
+  for(const st of steps){
+    const t = normalizeInstruction(stripHtml(st.instructions));
+    if(!t) continue;
+    if(parts.at(-1) === t) continue;
+    parts.push(t);
+  }
+  if(endLabel) parts.push(endLabel);
+  return parts.join('→');
+}
+
+function distM(a,b){
+  if(!a||!b) return null;
+  const A = {lat:(typeof a.lat==='function'?a.lat():a.lat), lng:(typeof a.lng==='function'?a.lng():a.lng)};
+  const B = {lat:(typeof b.lat==='function'?b.lat():b.lat), lng:(typeof b.lng==='function'?b.lng():b.lng)};
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const dLat=toRad(B.lat-A.lat), dLng=toRad(B.lng-A.lng);
+  const s1=Math.sin(dLat/2), s2=Math.sin(dLng/2);
+  const h=s1*s1 + Math.cos(toRad(A.lat))*Math.cos(toRad(B.lat))*s2*s2;
+  return 2*R*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+
+function formatM(m){
+  if(m==null) return '';
+  if(m<1000) return Math.round(m)+'m';
+  return (Math.round(m/100)/10).toFixed(1)+'km';
+}
+
+function simplifyPoliceName(name){
+  const s=String(name||'').trim();
+  if(!s) return '派出所';
+  const poi=s.lastIndexOf('派出所');
+  if(poi>=0){
+    const end=poi+3;
+    const bj=s.lastIndexOf('分局', poi-1);
+    if(bj>=0) return s.slice(bj+2,end) || s.slice(0,end);
+    const bureau=s.lastIndexOf('警察局', poi-1);
+    if(bureau>=0) return s.slice(bureau+3,end) || s.slice(0,end);
+    return s.slice(Math.max(0,poi-8), end);
+  }
+  const br=s.lastIndexOf('分局');
+  if(br>=0){
+    const end=br+2;
+    const bureau=s.lastIndexOf('警察局', br-1);
+    if(bureau>=0) return s.slice(bureau+3,end) || s.slice(0,end);
+    return s.slice(Math.max(0,br-8), end);
+  }
+  return s;
+}
+
+function debounce(fn, ms){
+  let t=0;
+  return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); };
+}
+
+async function copyFromTextArea(textareaId, btnId){
+  const ta=$(textareaId), btn=$(btnId);
+  const text=(ta?.value||'').trim();
+  if(!text) return sys('沒有可複製的內容。');
+
+  let ok=false;
+  try{ await navigator.clipboard.writeText(text); ok=true; }catch(_){ }
+  if(!ok){
+    try{
+      ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+      ok=!!document.execCommand('copy');
+      window.getSelection?.().removeAllRanges?.();
+    }catch(_){ }
+  }
+  if(!ok) return sys('複製失敗（可能被瀏覽器權限阻擋）。');
+
+  const old=btn.textContent;
+  btn.textContent='已複製';
+  setTimeout(()=>btn.textContent=old, 750);
+}
+
+// ===== DB helpers =====
+function ensureDefaultMedDb(){
+  if(!Array.isArray(S.medDb)) S.medDb=[];
+  const seen=new Set();
+  for(const e of S.medDb){
+    const pid=String(e?.placeId||'').trim();
+    if(pid) seen.add(pid);
+  }
+  let changed=false;
+  for(const d of DEFAULT_MED_DB){
+    const pid=String(d?.placeId||'').trim();
+    if(pid && !seen.has(pid)){
+      S.medDb.push({ ...d });
+      seen.add(pid);
+      changed=true;
+    }
+  }
+  return changed;
+}
+
+// ===== Minimal self-tests (no external deps) =====
+(function runSelfTests(){
+  const assert = (name, cond) => { if(!cond) throw new Error('Test failed: '+name); };
+  try{
+    assert('collapseSpaces', collapseSpaces('a\n\tb') === 'a b');
+    assert('formatM_1500', formatM(1500) === '1.5km');
+    assert('distM_zero', distM({lat:0,lng:0},{lat:0,lng:0}) === 0);
+    assert('simplifyPoliceName', simplifyPoliceName('臺北市政府警察局中山分局建國派出所').includes('派出所'));
+    const mock={routes:[{legs:[{steps:[{instructions:'右轉中山路'},{instructions:'左轉民生路'}]}]}]};
+    assert('stepsToArrow', stepsToArrow(mock,'A','B') === 'A→右轉中山路→左轉民生路→B');
+    // DEFAULT_MED_DB should be stable
+    assert('DEFAULT_MED_DB_count', DEFAULT_MED_DB.length === 10);
+    // ensureDefaultMedDb dedupe by placeId
+    S.medDb=[{name:'X',placeId:DEFAULT_MED_DB[0].placeId,lat:0,lng:0}];
+    ensureDefaultMedDb();
+    const cnt=S.medDb.filter(x=>x.placeId===DEFAULT_MED_DB[0].placeId).length;
+    assert('ensureDefaultMedDb_dedupe', cnt===1);
+    console.log('[SelfTests] OK');
+  }catch(e){
+    console.error(e);
+    sys('自我測試失敗：'+e.message);
+  }
+})();
+
+// ===== Google loader =====
+window.gm_authFailure=()=>sys('Google Maps 認證失敗（請檢查 Key/Billing/Referrer/API 啟用）。');
+
+function loadMaps(key){
+  if(!key) return sys('請先貼上 API Key。');
+  if(location.protocol==='file:') return sys('請不要用 file:// 開啟，改用 http://localhost 或網域。');
+  document.getElementById('gmaps-js')?.remove();
+
+  sys('載入 Google 地圖中…');
+  const sc=document.createElement('script');
+  sc.id='gmaps-js';
+  sc.async=true; sc.defer=true;
+  sc.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&libraries=places&region=TW&language=zh-TW&callback=initMap';
+  sc.onerror=()=>sys('載入失敗：請檢查網路與 Key 設定（Console 會有詳細錯誤）。');
+  document.head.appendChild(sc);
+}
+
+function getTravelMode(){ return google.maps.TravelMode[$('mode').value] || google.maps.TravelMode.DRIVING; }
+
+function routePromise(req){
+  return new Promise((resolve,reject)=>{
+    S.dirSvc.route(req,(res,status)=>status==='OK'?resolve(res):reject({status,res}));
+  });
+}
+
+async function routeAndRender(origin, destination, renderer){
+  const res=await routePromise({origin,destination,travelMode:getTravelMode(),region:'TW'}).catch(()=>null);
+  if(res && renderer) renderer.setDirections(res);
+  return res;
+}
+
+function makeRenderer({color,weight,opacity,draggable=true,preserveViewport=false}){
+  return new google.maps.DirectionsRenderer({
+    map:S.map,
+    draggable,
+    preserveViewport,
+    polylineOptions:{ strokeWeight:weight, strokeOpacity:opacity, ...(color?{strokeColor:color}:{}) }
+  });
+}
+
+function applyVisibility(){
+  if(!S.map) return;
+  S.rMain.setMap($('showMain').checked? S.map:null);
+  S.rPolice.setMap($('showPolice').checked? S.map:null);
+  S.rHosp.setMap($('showHospital').checked? S.map:null);
+}
+
+function poiStartLabel(){
+  const m=$('poiOrigin').value;
+  if(m==='start') return $('start').value.trim()||'起點';
+  if(m==='end') return $('end').value.trim()||'終點';
+  return '主路線中心';
+}
+
+function poiOriginLoc(){
+  const m=$('poiOrigin').value;
+  const leg=S.lastMain?.routes?.[0]?.legs?.[0];
+  if(m==='start' && leg?.start_location) return leg.start_location;
+  if(m==='end' && leg?.end_location) return leg.end_location;
+  const b=S.lastMain?.routes?.[0]?.bounds;
+  return b ? b.getCenter() : null;
+}
+
+const refreshPOI_debounced = debounce(()=>refreshPOI(), 650);
+
+window.initMap=function(){
+  sys('Google 地圖已載入。');
+
+  S.map=new google.maps.Map($('map'),{
+    center:{lat:23.6978,lng:120.9605},
+    zoom:8,
+    mapTypeControl:true,
+    mapTypeControlOptions:{
+      style: google.maps.MapTypeControlStyle.DROPDOWN_MENU,
+      position: google.maps.ControlPosition.TOP_LEFT,
+      mapTypeIds: ['roadmap','satellite','hybrid','terrain']
+    },
+    streetViewControl:true,
+    streetViewControlOptions:{ position: google.maps.ControlPosition.RIGHT_BOTTOM },
+    fullscreenControl:true
+  });
+
+  S.places=new google.maps.places.PlacesService(S.map);
+  S.dirSvc=new google.maps.DirectionsService();
+
+  S.rMain=makeRenderer({weight:6,opacity:0.92,draggable:true,preserveViewport:false});
+  S.rPolice=makeRenderer({color:'#FF9800',weight:5,opacity:0.85,draggable:true,preserveViewport:true});
+  S.rHosp=makeRenderer({color:'#FF3B30',weight:5,opacity:0.85,draggable:true,preserveViewport:true});
+
+  S.rMain.addListener('directions_changed', ()=>{
+    const d=S.rMain.getDirections();
+    if(!d) return;
+    S.lastMain=d;
+    $('txtMain').value=stepsToArrow(d, $('start').value.trim()||'起點', $('end').value.trim()||'終點');
+    refreshPOI_debounced();
+  });
+
+  S.rPolice.addListener('directions_changed', ()=>{
+    const d=S.rPolice.getDirections();
+    if(!d) return;
+    $('txtPolice').value=stepsToArrow(d, poiStartLabel(), S.lastPolice?.name||'派出所');
+  });
+
+  S.rHosp.addListener('directions_changed', ()=>{
+    const d=S.rHosp.getDirections();
+    if(!d) return;
+    $('txtHospital').value=stepsToArrow(d, poiStartLabel(), S.lastHosp?.name||'醫療院所');
+  });
+
+  try{
+    const opt={componentRestrictions:{country:'tw'},fields:['formatted_address','name','geometry']};
+    new google.maps.places.Autocomplete($('start'),opt);
+    new google.maps.places.Autocomplete($('end'),opt);
+  }catch(_){ }
+
+  loadMedDb();
+  applyVisibility();
+};
+
+// ===== Places helpers =====
+function nearbyOne(req){
+  return new Promise((resolve,reject)=>{
+    S.places.nearbySearch(req,(results,status)=>{
+      if(status!=='OK' || !results?.length) return reject({status});
+      resolve(results[0]);
+    });
+  });
+}
+
+function textSearch(req){
+  return new Promise(resolve=>{
+    S.places.textSearch(req,(results,status)=>{
+      if(status!=='OK' || !results?.length) return resolve([]);
+      resolve(results);
+    });
+  });
+}
+
+function placeDetails(placeId){
+  return new Promise((resolve,reject)=>{
+    S.places.getDetails({placeId,fields:['name','formatted_address','geometry','place_id']},(p,status)=>{
+      if(status!=='OK' || !p?.geometry?.location) return reject({status});
+      resolve(p);
+    });
+  });
+}
+
+// ===== Route flows =====
+async function routeMain(){
+  if(!S.dirSvc) return sys('尚未載入 Google 地圖。');
+  const origin=$('start').value.trim();
+  const destination=$('end').value.trim();
+  if(!origin||!destination) return sys('請輸入起點與終點。');
+
+  sys('主路線規劃中…');
+  const res=await routePromise({origin,destination,travelMode:getTravelMode(),region:'TW'}).catch(()=>null);
+  if(!res) return sys('主路線規劃失敗（請看 Console）。');
+
+  S.rMain.setDirections(res);
+  S.lastMain=res;
+  const b=res.routes?.[0]?.bounds;
+  if(b) S.map.fitBounds(b);
+  sys('主路線已更新（可拖曳）。');
+}
+
+async function refreshPoliceList(loc){
+  const sel=$('policeSelect'), hint=$('policeHint'), btn=$('btnPoliceRoute');
+  hint.textContent='取得週邊派出所清單中…';
+
+  const list=await new Promise(resolve=>{
+    S.places.nearbySearch({location:loc,rankBy:google.maps.places.RankBy.DISTANCE,type:'police'},(results,status)=>{
+      if(status!=='OK' || !results?.length) return resolve([]);
+      resolve(results.slice(0,10));
+    });
+  });
+
+  S.policeList=list;
+  sel.innerHTML='';
+
+  if(!list.length){
+    sel.style.display='none';
+    btn.style.display='none';
+    hint.textContent='找不到週邊派出所。';
+    return;
+  }
+
+  sel.style.display='block';
+  btn.style.display='inline-block';
+
+  let chosen=0;
+  if(S.selectedPoliceId){
+    const i=list.findIndex(p=>p.place_id===S.selectedPoliceId);
+    if(i>=0) chosen=i;
+  }
+
+  list.forEach((p,i)=>{
+    const opt=document.createElement('option');
+    opt.value=String(i);
+    const m=distM(loc, p.geometry?.location);
+    opt.textContent=simplifyPoliceName(p.name||'派出所') + (m!=null?('｜'+formatM(m)):'');
+    sel.appendChild(opt);
+  });
+
+  sel.value=String(chosen);
+  S.selectedPoliceId=list[chosen]?.place_id||null;
+  hint.textContent='已載入派出所清單：請選擇後按「規劃派出所路線」。';
+}
+
+async function routeSelectedPolice(){
+  if(!S.lastMain) return sys('請先規劃主路線。');
+  const loc=poiOriginLoc();
+  if(!loc) return;
+
+  const idx=Number($('policeSelect').value||'0');
+  const p=S.policeList[idx];
+  if(!p?.geometry?.location) return sys('請先從清單選擇派出所。');
+
+  S.lastPolice=p;
+  S.selectedPoliceId=p.place_id||null;
+
+  sys('派出所路線規劃中…');
+  const res=await routeAndRender(loc, p.geometry.location, S.rPolice);
+  if(!res) return sys('派出所路線規劃失敗（請看 Console）。');
+
+  $('txtPolice').value=stepsToArrow(res, poiStartLabel(), p.name||'派出所');
+  applyVisibility();
+  sys('已更新派出所路線。');
+}
+
+async function pickFromDb(loc){
+  if(!S.medDb.length) return null;
+
+  let candidates=S.medDb.filter(e=>typeof e.lat==='number' && typeof e.lng==='number');
+
+  if(!candidates.length){
+    const need=S.medDb.filter(e=>e.placeId && (typeof e.lat!=='number' || typeof e.lng!=='number')).slice(0,3);
+    for(const e of need){
+      try{
+        const p=await placeDetails(e.placeId);
+        e.name=e.name||p.name;
+        e.address=e.address||p.formatted_address;
+        e.lat=p.geometry.location.lat();
+        e.lng=p.geometry.location.lng();
+      }catch(_){ }
+    }
+    saveMedDb();
+    candidates=S.medDb.filter(e=>typeof e.lat==='number' && typeof e.lng==='number');
+  }
+
+  let best=null, bestM=Infinity;
+  for(const e of candidates){
+    const m=distM(loc, {lat:e.lat, lng:e.lng});
+    if(m!=null && m<bestM){ bestM=m; best=e; }
+  }
+  if(!best) return null;
+
+  return { name: best.name||'醫學中心', location: new google.maps.LatLng(best.lat, best.lng), place: best };
+}
+
+async function refreshPOI(){
+  if(!S.places || !S.lastMain) return;
+  const loc=poiOriginLoc();
+  if(!loc) return;
+
+  await refreshPoliceList(loc);
+
+  const pref=$('hospitalPref').value;
+  let target=null;
+
+  if(pref==='db'){
+    target=await pickFromDb(loc);
+  }else if(pref==='medcenter'){
+    const p=await nearbyOne({location:loc,rankBy:google.maps.places.RankBy.DISTANCE,keyword:'醫學中心',type:'hospital'}).catch(()=>null);
+    if(p?.geometry?.location) target={name:p.name||'醫學中心', location:p.geometry.location, place:p};
+  }else if(pref==='hospital'){
+    const p=await nearbyOne({location:loc,rankBy:google.maps.places.RankBy.DISTANCE,type:'hospital'}).catch(()=>null);
+    if(p?.geometry?.location) target={name:p.name||'醫院', location:p.geometry.location, place:p};
+  }
+
+  if(target?.location){
+    S.lastHosp=target.place || {name:target.name, geometry:{location:target.location}};
+    const res=await routeAndRender(loc, target.location, S.rHosp);
+    if(res) $('txtHospital').value=stepsToArrow(res, poiStartLabel(), target.name||'醫療院所');
+  }
+
+  applyVisibility();
+}
+
+// ===== Med DB UI =====
+function escapeHtml(x){
+  return String(x||'').replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+}
+
+function loadMedDb(){
+  try{ S.medDb=JSON.parse(localStorage.getItem(MED_DB_KEY)||'[]'); }
+  catch(_){ S.medDb=[]; }
+  if(!Array.isArray(S.medDb)) S.medDb=[];
+
+  const changed=ensureDefaultMedDb();
+  if(changed) localStorage.setItem(MED_DB_KEY, JSON.stringify(S.medDb));
+
+  renderMedDb();
+}
+
+function saveMedDb(){
+  localStorage.setItem(MED_DB_KEY, JSON.stringify(S.medDb));
+  renderMedDb();
+}
+
+function renderMedDb(){
+  const box=$('medList');
+  box.innerHTML='';
+  if(!S.medDb.length){
+    box.innerHTML='<div class="small">（尚無醫學中心。請加入 Place ID 或從搜尋結果加入。）</div>';
+    return;
+  }
+
+  for(const e of S.medDb){
+    const div=document.createElement('div');
+    div.className='item';
+    div.innerHTML=`<div><b>${escapeHtml(e.name||'(未命名)')}</b><div class="m">${escapeHtml(e.address||'')}${e.placeId?('<br>placeId: '+escapeHtml(e.placeId)):''}</div></div>`;
+
+    const btn=document.createElement('button');
+    btn.className='danger';
+    btn.textContent='刪除';
+    btn.onclick=()=>{
+      S.medDb=S.medDb.filter(x=>x!==e);
+      ensureDefaultMedDb();
+      saveMedDb();
+      if(S.lastMain) refreshPOI();
+    };
+
+    div.appendChild(btn);
+    box.appendChild(div);
+  }
+}
+
+async function medSearch(){
+  if(!S.places) return sys('Places 未就緒（請先載入地圖）。');
+  const q=$('medInput').value.trim();
+  if(!q) return;
+
+  const center=S.map.getCenter();
+  const res=(await textSearch({location:center,query:q})).slice(0,8);
+
+  S.medSearch=res;
+  const sel=$('medSearchSelect');
+  sel.innerHTML='';
+
+  res.forEach((p,i)=>{
+    const opt=document.createElement('option');
+    opt.value=String(i);
+    opt.textContent=(p.name||'(未命名)')+(p.formatted_address?('｜'+p.formatted_address):'');
+    sel.appendChild(opt);
+  });
+
+  const show=!!res.length;
+  sel.style.display=show?'block':'none';
+  $('btnMedAddSelected').style.display=show?'inline-block':'none';
+  $('btnMedHideSearch').style.display=show?'inline-block':'none';
+  if(!show) sys('搜尋不到結果。');
+}
+
+async function addByPlaceId(){
+  if(!S.places) return sys('Places 未就緒（請先載入地圖）。');
+  const pid=$('medInput').value.trim();
+  if(!pid) return;
+
+  try{
+    const p=await placeDetails(pid);
+    if(S.medDb.some(x=>x.placeId===p.place_id)) return sys('此 Place ID 已存在於資料庫。');
+
+    S.medDb.push({
+      name:p.name||'',
+      placeId:p.place_id||pid,
+      address:p.formatted_address||'',
+      lat:p.geometry.location.lat(),
+      lng:p.geometry.location.lng()
+    });
+
+    ensureDefaultMedDb();
+    saveMedDb();
+    sys('已加入：'+(p.name||pid));
+    if(S.lastMain) refreshPOI();
+  }catch(e){
+    sys('Place ID 無效或無法取得細節（請看 Console）。');
+    console.error(e);
+  }
+}
+
+function addSelected(){
+  const sel=$('medSearchSelect');
+  if(sel.style.display==='none') return;
+
+  const idx=Number(sel.value||'0');
+  const p=S.medSearch[idx];
+  if(!p) return;
+
+  const pid=p.place_id||'';
+  if(pid && S.medDb.some(x=>x.placeId===pid)) return sys('此結果已存在於資料庫。');
+
+  const ll=p.geometry?.location;
+  const lat=ll?.lat?.();
+  const lng=ll?.lng?.();
+
+  S.medDb.push({
+    name:p.name||'',
+    placeId:pid,
+    address:p.formatted_address||'',
+    lat:typeof lat==='number'?lat:null,
+    lng:typeof lng==='number'?lng:null
+  });
+
+  ensureDefaultMedDb();
+  saveMedDb();
+  sys('已加入：'+(p.name||'(未命名)'));
+  if(S.lastMain) refreshPOI();
+}
+
+function hideSearch(){
+  $('medSearchSelect').style.display='none';
+  $('btnMedAddSelected').style.display='none';
+  $('btnMedHideSearch').style.display='none';
+  S.medSearch=[];
+}
+
+function exportDb(){ $('medJson').value=JSON.stringify(S.medDb,null,2); }
+
+function importDb(){
+  try{
+    const arr=JSON.parse($('medJson').value||'[]');
+    if(!Array.isArray(arr)) throw new Error('not array');
+
+    S.medDb=arr.map(x=>({
+      name:String(x.name||''),
+      placeId:String(x.placeId||''),
+      address:String(x.address||''),
+      lat:typeof x.lat==='number'?x.lat:null,
+      lng:typeof x.lng==='number'?x.lng:null
+    }));
+
+    ensureDefaultMedDb();
+    saveMedDb();
+    sys('已匯入並合併預設醫療院所（共 '+S.medDb.length+' 筆）。');
+    if(S.lastMain) refreshPOI();
+  }catch(e){
+    sys('匯入失敗：JSON 格式錯誤。');
+    console.error(e);
+  }
+}
+
+function clearAll(){
+  $('txtMain').value='';
+  $('txtPolice').value='';
+  $('txtHospital').value='';
+
+  S.lastMain=null;
+  S.lastPolice=null;
+  S.lastHosp=null;
+  S.policeList=[];
+  S.selectedPoliceId=null;
+
+  $('policeSelect').innerHTML='';
+  $('policeSelect').style.display='none';
+  $('btnPoliceRoute').style.display='none';
+  $('policeHint').textContent='—';
+
+  S.rMain?.set('directions', null);
+  S.rPolice?.set('directions', null);
+  S.rHosp?.set('directions', null);
+
+  sys('已清除。');
+}
+
+// ===== Bindings =====
+on('btnLoad','click', ()=>loadMaps($('apiKey').value.trim()));
+on('btnRoute','click', routeMain);
+on('btnClear','click', clearAll);
+
+on('showMain','change', applyVisibility);
+on('showPolice','change', applyVisibility);
+on('showHospital','change', applyVisibility);
+
+on('poiOrigin','change', ()=>{ if(S.lastMain) refreshPOI(); });
+on('hospitalPref','change', ()=>{ if(S.lastMain) refreshPOI(); });
+on('mode','change', ()=>{ if(S.lastMain) routeMain(); });
+
+on('btnCopyMain','click', ()=>copyFromTextArea('txtMain','btnCopyMain'));
+on('btnCopyPolice','click', ()=>copyFromTextArea('txtPolice','btnCopyPolice'));
+on('btnCopyHospital','click', ()=>copyFromTextArea('txtHospital','btnCopyHospital'));
+
+on('btnPoliceRefresh','click', ()=>{ if(S.lastMain) refreshPOI(); else sys('請先規劃主路線。'); });
+on('btnPoliceRoute','click', routeSelectedPolice);
+on('policeSelect','change', ()=>{
+  const loc=poiOriginLoc();
+  const idx=Number($('policeSelect').value||'0');
+  const p=S.policeList[idx];
+  S.selectedPoliceId=p?.place_id||null;
+  const m=(loc && p?.geometry?.location) ? distM(loc, p.geometry.location) : null;
+  $('policeHint').textContent=p
+    ? ('已選擇：'+simplifyPoliceName(p.name||'派出所')+(m!=null?('｜'+formatM(m)):'')+'（按下按鈕規劃路線）')
+    : '—';
+});
+
+on('btnMedSearch','click', medSearch);
+on('btnMedAddPlaceId','click', addByPlaceId);
+on('btnMedAddSelected','click', addSelected);
+on('btnMedHideSearch','click', hideSearch);
+on('btnMedClear','click', ()=>{
+  // 固定清單要常駐：此按鈕重置為預設
+  S.medDb=[];
+  ensureDefaultMedDb();
+  saveMedDb();
+  sys('已重置為預設醫療院所（共 '+S.medDb.length+' 筆）。');
+  if(S.lastMain) refreshPOI();
+});
+on('btnMedExport','click', exportDb);
+on('btnMedImport','click', importDb);
+
+on('start','keydown', (e)=>{ if(e.key==='Enter') routeMain(); });
+on('end','keydown', (e)=>{ if(e.key==='Enter') routeMain(); });
+
+</script>
+</body>
+</html>
